@@ -1,3 +1,4 @@
+
 # Import the dependencies.
 
 # %matplotlib inline
@@ -38,9 +39,6 @@ Base.prepare(autoload_with=engine)
 Measurement = Base.classes.measurement
 Station = Base.classes.station
 
-# Create a session (link) from Python to the DB
-session = Session(engine)
-
 #################################################
 # Flask Routes
 
@@ -77,8 +75,93 @@ def precipitation():
     # Return the JSON representation of the dictionary
     return jsonify(precipitation_data)
 
-# Step 4: Run the Flask app
+# Define the stations route
+@app.route("/api/v1.0/stations")
+def stations():
+    # Create a session (link) from Python to the database
+    session = Session(engine)
+    
+    # Query all stations
+    results = session.query(Station.station).all()
+    
+    # Close the session
+    session.close()
+    
+    # Unpack the query results into a list (use list comprehension)
+    stations_list = [station[0] for station in results]
+    
+    # Return the JSON representation of the list
+    return jsonify(stations_list)
+
+# Define the tobs route
+@app.route("/api/v1.0/tobs")
+def tobs():
+    # Create a session (link) from Python to the database
+    session = Session(engine)
+
+    # Find the most recent date in the data set
+    most_recent_date = session.query(func.max(Measurement.date)).scalar()
+
+    # Calculate the date 12 months ago from the most recent date
+    one_year_ago = dt.datetime.strptime(most_recent_date, "%Y-%m-%d") - dt.timedelta(days=365)
+
+    # Find the most active station (the one with the most temperature observations)
+    most_active_station = session.query(Measurement.station)\
+                                 .group_by(Measurement.station)\
+                                 .order_by(func.count(Measurement.station).desc())\
+                                 .first()[0]
+
+    # Query the temperature observations (tobs) of the most active station for the last year
+    results = session.query(Measurement.date, Measurement.tobs)\
+                     .filter(Measurement.station == most_active_station)\
+                     .filter(Measurement.date >= one_year_ago)\
+                     .all()
+
+    # Close the session
+    session.close()
+
+    # Create a list of dictionaries containing date and tobs
+    temp_data = [{"date": date, "temperature": tobs} for date, tobs in results]
+
+    # Return a JSON list of temperature observations for the previous year
+    return jsonify(temp_data)
+
+# Define the temperature stats route
+@app.route("/api/v1.0/<start>")
+@app.route("/api/v1.0/<start>/<end>")
+def stats(start=None, end=None):
+    # Create a session (link) from Python to the database
+    session = Session(engine)
+
+    # Select the start and end dates, or if no end date is provided, just the start date
+    if not end:
+        # Query TMIN, TAVG, TMAX for all dates >= start
+        results = session.query(func.min(Measurement.tobs),
+                                func.avg(Measurement.tobs),
+                                func.max(Measurement.tobs))\
+                         .filter(Measurement.date >= start).all()
+    else:
+        # Query TMIN, TAVG, TMAX for dates between start and end (inclusive)
+        results = session.query(func.min(Measurement.tobs),
+                                func.avg(Measurement.tobs),
+                                func.max(Measurement.tobs))\
+                         .filter(Measurement.date >= start)\
+                         .filter(Measurement.date <= end).all()
+
+    # Close the session
+    session.close()
+
+    # Convert the results to a list
+    temps = list(np.ravel(results))
+
+    # Return the JSON representation of the dictionary
+    return jsonify({"TMIN": temps[0], "TAVG": temps[1], "TMAX": temps[2]})
+
+# Run the Flask app
 if __name__ == "__main__":
     app.run(debug=True)
 
-   
+
+
+
+
